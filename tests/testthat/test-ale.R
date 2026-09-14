@@ -1,0 +1,803 @@
+test_that("calculate_ale returns named list of data.tables", {
+  skip_if_not_installed("mlr3")
+  skip_if_not_installed("mlr3learners")
+  set.seed(1)
+  n = 40
+  data = data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  task = mlr3::TaskRegr$new("t", backend = data, target = "y")
+  learner = mlr3::lrn("regr.ranger")
+  learner$train(task)
+  result = xplaineff:::calculate_ale(
+    model = learner,
+    data = data,
+    feature_set = c("x1", "x2"),
+    target_feature_name = "y",
+    n_intervals = 5
+  )
+  expect_true(is.list(result))
+  expect_equal(sort(names(result)), c("x1", "x2"))
+  for (nm in names(result)) {
+    expect_true(data.table::is.data.table(result[[nm]]))
+    expect_true(all(c("row_id", "d_l", "interval_index") %in% names(result[[nm]])))
+  }
+})
+
+test_that("calculate_ale_heterogeneity_cpp returns numeric", {
+  skip_ale_cpp_if_unavailable()
+  n = 20
+  dt = data.table::data.table(
+    row_id = seq_len(n),
+    interval_index = rep(1:4, length.out = n),
+    d_l = rnorm(n),
+    int_n = 5L, int_s1 = 0, int_s2 = 1
+  )
+  result = xplaineff:::calculate_ale_heterogeneity_single_cpp(dt$d_l, dt$interval_index)
+  expect_true(is.numeric(result))
+  expect_length(result, 1)
+  expect_true(!is.na(result))
+  expect_true(result >= 0)
+})
+
+test_that("calculate_ale_heterogeneity_list_cpp works with list of ALE data", {
+  skip_ale_cpp_if_unavailable()
+  n = 15
+  dt1 = data.table::data.table(
+    row_id = seq_len(n), interval_index = rep(1:3, length.out = n),
+    d_l = rnorm(n), int_n = 5L, int_s1 = 0, int_s2 = 1
+  )
+  dt2 = data.table::data.table(
+    row_id = seq_len(n), interval_index = rep(1:5, length.out = n),
+    d_l = rnorm(n), int_n = 3L, int_s1 = 0, int_s2 = 1
+  )
+  Y = list(f1 = dt1, f2 = dt2)
+  result = xplaineff:::calculate_ale_heterogeneity_list_cpp(Y)
+  # C++ returns a named list of scalars, not a numeric vector
+  expect_true(is.list(result))
+  expect_length(result, 2)
+  expect_true(all(vapply(result, is.numeric, logical(1))))
+  expect_true(all(!is.na(unlist(result))))
+  expect_true(all(unlist(result) >= 0))
+})
+
+test_that("ALE tree fit stores root and cached effect", {
+  skip_if_not_installed("mlr3")
+  skip_if_not_installed("mlr3learners")
+  skip_ale_cpp_if_unavailable()
+  set.seed(2)
+  n = 50
+  data = data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  task = mlr3::TaskRegr$new("t", backend = data, target = "y")
+  learner = mlr3::lrn("regr.ranger")
+  learner$train(task)
+  tree = GadgetTree$new(strategy = AleStrategy$new(), n_split = 1, min_node_size = 15)
+  tree$fit(model = learner, data = data, target_feature_name = "y", n_intervals = 5)
+  expect_true(!is.null(tree$root))
+  strat = tree$strategy
+  expect_true(!is.null(strat$effect))
+  expect_true(is.list(strat$effect))
+})
+
+test_that("AleStrategy auto engine selects cpp for native predictors", {
+  skip_if_not_installed("mlr3")
+  skip_if_not_installed("mlr3learners")
+  skip_ale_cpp_if_unavailable()
+  set.seed(13)
+  n = 45
+  data = data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  task = mlr3::TaskRegr$new("t_default_engine", backend = data, target = "y")
+  learner = mlr3::lrn("regr.ranger")
+  learner$train(task)
+  tree = GadgetTree$new(strategy = AleStrategy$new(), n_split = 1, min_node_size = 10)
+  tree$fit(model = learner, data = data, target_feature_name = "y", n_intervals = 5)
+  expect_identical(tree$strategy$ale_engine, "cpp")
+})
+
+test_that("AleStrategy auto engine selects r for custom predict_fun", {
+  set.seed(13)
+  n = 45
+  data = data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  pred_fun = function(model, newdata) newdata$x1 + 0.5 * newdata$x2
+  tree = GadgetTree$new(strategy = AleStrategy$new(), n_split = 1, min_node_size = 10)
+  tree$fit(
+    model = "toy",
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 5,
+    predict_fun = pred_fun
+  )
+  expect_identical(tree$strategy$ale_engine, "r")
+})
+
+test_that("AleStrategy auto engine honors compact ALE option", {
+  skip_ale_cpp_if_unavailable()
+  set.seed(13)
+  n = 45
+  data = data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  pred_fun = function(model, newdata) newdata$x1 + 0.5 * newdata$x2
+  tree = GadgetTree$new(strategy = AleStrategy$new(), n_split = 1, min_node_size = 10)
+  withr::with_options(
+    list(xplaineff.ale.compact = TRUE),
+    tree$fit(
+      model = "toy",
+      data = data,
+      target_feature_name = "y",
+      n_intervals = 5,
+      predict_fun = pred_fun
+    )
+  )
+  expect_identical(tree$strategy$ale_engine, "cpp")
+  expect_true(xplaineff:::is_ale_compact(tree$strategy$effect))
+})
+
+test_that("prepare_split_data_ale returns Z and Y", {
+  skip_if_not_installed("mlr3")
+  skip_if_not_installed("mlr3learners")
+  skip_ale_cpp_if_unavailable()
+  set.seed(3)
+  n = 30
+  data = data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  task = mlr3::TaskRegr$new("t", backend = data, target = "y")
+  learner = mlr3::lrn("regr.ranger")
+  learner$train(task)
+  result = xplaineff:::prepare_split_data_ale(
+    model = learner,
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 5,
+    split_feature = c("x1", "x2")
+  )
+  expect_true("Z" %in% names(result))
+  expect_true("Y" %in% names(result))
+  expect_true(data.table::is.data.table(result$Z))
+  expect_true(is.list(result$Y))
+})
+
+test_that("prepare_split_data_ale r and cpp engines are numerically aligned", {
+  skip_if_not_installed("mlr3")
+  skip_if_not_installed("mlr3learners")
+  skip_ale_cpp_if_unavailable()
+  set.seed(11)
+  n = 60
+  data = data.frame(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    y = rnorm(n)
+  )
+  task = mlr3::TaskRegr$new("t", backend = data, target = "y")
+  learner = mlr3::lrn("regr.ranger")
+  learner$train(task)
+
+  out_r = xplaineff:::prepare_split_data_ale(
+    model = learner,
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 6,
+    feature_set = c("x1", "x2"),
+    split_feature = c("x1", "x2"),
+    ale_engine = "r"
+  )
+  out_cpp = xplaineff:::prepare_split_data_ale(
+    model = learner,
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 6,
+    feature_set = c("x1", "x2"),
+    split_feature = c("x1", "x2"),
+    ale_engine = "cpp"
+  )
+
+  for (feat in c("x1", "x2")) {
+    expect_equal(out_r$Y[[feat]]$d_l, out_cpp$Y[[feat]]$d_l, tolerance = 1e-10)
+    expect_equal(out_r$Y[[feat]]$interval_index, out_cpp$Y[[feat]]$interval_index)
+  }
+})
+
+test_that("prepare_split_data_ale cpp engine works for non-mlr3 model", {
+  skip_if_not_installed("ranger")
+  skip_ale_cpp_if_unavailable()
+  set.seed(12)
+  n = 80
+  data = data.frame(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    y = rnorm(n)
+  )
+  model = ranger::ranger(y ~ ., data = data, num.trees = 50L, num.threads = 1L, seed = 12L)
+  out = xplaineff:::prepare_split_data_ale(
+    model = model,
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 5,
+    feature_set = c("x1", "x2"),
+    split_feature = c("x1", "x2"),
+    ale_engine = "cpp"
+  )
+  expect_true(data.table::is.data.table(out$Z))
+  expect_true(is.list(out$Y))
+  expect_true(all(c("x1", "x2") %in% names(out$Y)))
+})
+
+test_that("calculate_ale returns zero d_l for constant numeric feature", {
+  n = 15L
+  data = data.frame(x_const = rep(2.5, n), y = seq_len(n))
+  predict_fun = function(model, data) rep(0.0, nrow(data))
+  result = xplaineff:::calculate_ale(
+    model = NULL, data = data,
+    feature_set = "x_const", target_feature_name = "y",
+    predict_fun = predict_fun
+  )
+  expect_true(all(result$x_const$d_l == 0))
+  expect_equal(nrow(result$x_const), n)
+})
+
+test_that("calculate_ale returns zero d_l for single-level factor feature", {
+  n = 12L
+  data = data.frame(x_cat = factor(rep("a", n)), y = seq_len(n))
+  predict_fun = function(model, data) rep(0.0, nrow(data))
+  result = xplaineff:::calculate_ale(
+    model = NULL, data = data,
+    feature_set = "x_cat", target_feature_name = "y",
+    predict_fun = predict_fun
+  )
+  expect_true(all(result$x_cat$d_l == 0))
+  expect_equal(nrow(result$x_cat), n)
+})
+
+test_that("calculate_ale preserves fractional interval bounds for integer features", {
+  data = data.frame(x = 1L:4L, y = 0)
+  predict_fun = function(model, data) as.numeric(data$x)
+
+  expect_warning({
+    result_r = xplaineff:::calculate_ale(
+      model = NULL, data = data, feature_set = "x", target_feature_name = "y",
+      n_intervals = 2L, predict_fun = predict_fun
+    )
+  },
+    NA
+  )
+  expect_warning({
+    result_cpp = xplaineff:::calculate_ale_fast(
+      model = NULL, data = data, feature_set = "x", target_feature_name = "y",
+      n_intervals = 2L, predict_fun = predict_fun
+    )
+  },
+    NA
+  )
+
+  expect_equal(result_r$x$d_l, rep(1.5, 4L))
+  expect_equal(result_cpp$x$d_l, rep(1.5, 4L))
+})
+
+test_that("calculate_ale detaches custom predictions before restoring scratch data", {
+  data = data.frame(x = as.numeric(1:4), y = 0)
+  predict_fun = function(model, data) data$x
+
+  result_r = xplaineff:::calculate_ale(
+    model = NULL, data = data, feature_set = "x", target_feature_name = "y",
+    n_intervals = 2L, predict_fun = predict_fun
+  )
+  result_cpp = xplaineff:::calculate_ale_fast(
+    model = NULL, data = data, feature_set = "x", target_feature_name = "y",
+    n_intervals = 2L, predict_fun = predict_fun
+  )
+
+  expect_equal(result_r$x$d_l, rep(1.5, 4L))
+  expect_equal(result_cpp$x$d_l, rep(1.5, 4L))
+})
+
+test_that("AleStrategy accepts a bare prediction function as model", {
+  skip_ale_cpp_if_unavailable()
+  data = data.frame(x = as.numeric(1:4), y = 0)
+  model = function(data) data$x
+
+  result = xplaineff:::prepare_split_data_ale(
+    model = model,
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 2L,
+    feature_set = "x",
+    split_feature = "x",
+    ale_engine = "cpp"
+  )
+
+  expect_equal(result$Y$x$d_l, rep(1.5, 4L))
+})
+
+test_that("calculate_ale restores shared scratch data between features", {
+  skip_ale_cpp_if_unavailable()
+  data = data.frame(
+    x_num = as.numeric(1:6),
+    x_cat = factor(rep(c("a", "b"), 3L)),
+    x_unused = rep(0L:1L, 3L),
+    y = 0
+  )
+  predict_fun = function(model, data) {
+    data$x_num + ifelse(data$x_cat == "b", 2, 0)
+  }
+  features = c("x_num", "x_cat", "x_unused")
+
+  result_r = xplaineff:::calculate_ale(
+    model = NULL, data = data, feature_set = features, target_feature_name = "y",
+    n_intervals = 2L, predict_fun = predict_fun
+  )
+  result_cpp = xplaineff:::calculate_ale_fast(
+    model = NULL, data = data, feature_set = features, target_feature_name = "y",
+    n_intervals = 2L, predict_fun = predict_fun
+  )
+
+  expect_equal(result_r$x_unused$d_l, rep(0, nrow(data)))
+  expect_equal(result_cpp$x_unused$d_l, rep(0, nrow(data)))
+})
+
+test_that("make_predictor normalizes custom prediction output and checks length", {
+  predict_df = function(model, data) data.frame(pred = seq_len(nrow(data)))
+  predictor = xplaineff:::make_predictor(model = NULL, predict_fun = predict_df)
+  expect_equal(predictor$predict(data.frame(x = 1:3)), c(1, 2, 3))
+
+  predict_bad = function(model, data) 1
+  predictor_bad = xplaineff:::make_predictor(model = NULL, predict_fun = predict_bad)
+  expect_error(
+    predictor_bad$predict(data.frame(x = 1:3)),
+    regexp = "Prediction length mismatch"
+  )
+})
+
+test_that("node_transform_ale reuses full root ALE effect", {
+  skip_ale_cpp_if_unavailable()
+  dt = data.table::data.table(
+    row_id = 1:6,
+    feat_val = 1:6,
+    d_l = c(1, 2, 3, 4, 5, 6),
+    interval_index = rep(1:2, each = 3L)
+  )
+  dt[, int_n := .N, by = interval_index]
+  dt[, int_s1 := sum(d_l), by = interval_index]
+  dt[, int_s2 := sum(d_l^2), by = interval_index]
+  effect = list(x = dt)
+
+  result = xplaineff:::node_transform_ale(effect, idx = 1:6, is_child = FALSE)
+
+  expect_identical(result, effect)
+})
+
+test_that("node_transform_ale refreshes child interval statistics", {
+  skip_ale_cpp_if_unavailable()
+  dt = data.table::data.table(
+    row_id = 1:8,
+    feat_val = c(1, 2, 1, 2, 3, 4, 3, 4),
+    d_l = c(1, 2, 3, 4, 5, 6, 7, 8),
+    interval_index = rep(1:2, each = 4L)
+  )
+  dt[, int_n := .N, by = interval_index]
+  dt[, int_s1 := sum(d_l), by = interval_index]
+  dt[, int_s2 := sum(d_l^2), by = interval_index]
+  effect = list(x = dt)
+  idx = c(2L, 3L, 6L, 7L)
+
+  result = xplaineff:::node_transform_ale(effect, idx = idx, is_child = FALSE)$x
+  expected = dt[match(idx, row_id)]
+  expected[, `:=`(
+    int_n = .N,
+    int_s1 = sum(d_l, na.rm = TRUE),
+    int_s2 = sum(d_l^2, na.rm = TRUE)
+  ), by = interval_index]
+
+  expect_equal(result, expected)
+})
+
+test_that("build_ale_interval_stats orders rows by row_id when needed", {
+  skip_ale_cpp_if_unavailable()
+  dt = data.table::data.table(
+    row_id = c(3L, 1L, 4L, 2L),
+    feat_val = c(3, 1, 4, 2),
+    d_l = c(30, 10, 40, 20),
+    interval_index = c(2L, 1L, 2L, 1L)
+  )
+  dt[, int_n := .N, by = interval_index]
+  dt[, int_s1 := sum(d_l), by = interval_index]
+  dt[, int_s2 := sum(d_l^2), by = interval_index]
+  effect = list(x = dt)
+
+  result = xplaineff:::build_ale_interval_stats(effect, "x")
+
+  expect_equal(result$d_l_mat[1L, ], c(10, 20, 30, 40))
+  expect_equal(result$interval_idx_mat[1L, ], c(1L, 1L, 2L, 2L))
+  expect_equal(result$tot_n, c(2, 2))
+  expect_equal(result$tot_s1, c(30, 70))
+  expect_equal(result$tot_s2, c(500, 2500))
+})
+
+test_that("search_best_split_ale prunes inactive ALE components without pruning split candidates", {
+  skip_ale_cpp_if_unavailable()
+  n = 10L
+  signal = data.table::data.table(
+    row_id = seq_len(n),
+    feat_val = seq_len(n),
+    x_left = seq_len(n),
+    x_right = seq_len(n),
+    d_l = c(rep(2, 5L), rep(-2, 5L)),
+    interval_index = rep(1L, n)
+  )
+  signal[, int_n := .N, by = interval_index]
+  signal[, int_s1 := sum(d_l), by = interval_index]
+  signal[, int_s2 := sum(d_l^2), by = interval_index]
+  inactive = data.table::copy(signal)
+  inactive[, d_l := seq_len(n) * 1e-14]
+  inactive[, int_s1 := sum(d_l), by = interval_index]
+  inactive[, int_s2 := sum(d_l^2), by = interval_index]
+  effect = list(signal = signal, inactive = inactive)
+  Z = data.frame(x = seq_len(n), z = rev(seq_len(n)))
+
+  result = xplaineff:::search_best_split_ale(Z = Z, effect = effect, min_node_size = 2L)
+  active_result = xplaineff:::search_best_split_ale(Z = Z, effect = effect["signal"], min_node_size = 2L)
+
+  expect_equal(xplaineff:::active_ale_effect_features(effect), "signal")
+  expect_setequal(unique(result$split_feature), colnames(Z))
+  expect_equal(nrow(result), length(effect) * ncol(Z))
+  expect_true(all(result$feature == rep(names(effect), times = ncol(Z))))
+  expect_equal(result$left_objective_value_j[result$feature == "inactive"], rep(0, ncol(Z)))
+  expect_equal(result$right_objective_value_j[result$feature == "inactive"], rep(0, ncol(Z)))
+
+  best = result[result$best_split, ][1L, ]
+  active_best = active_result[active_result$best_split, ][1L, ]
+  expect_equal(best$split_feature, active_best$split_feature)
+  expect_equal(best$split_point, active_best$split_point)
+  expect_equal(best$split_objective, active_best$split_objective)
+})
+
+test_that("cpp_ale_numeric_prepare returns zero_effect for constant feature", {
+  skip_ale_cpp_if_unavailable()
+  result = xplaineff:::cpp_ale_numeric_prepare(rep(1.0, 20L), n_intervals = 5L)
+  expect_true(isTRUE(result$zero_effect))
+})
+
+test_that("ale_sweep_cpp returns valid split for simple one-feature case", {
+  skip_ale_cpp_if_unavailable()
+  n = 6L
+  # d_l: all 1 in interval 1 (obs 1-3), all -1 in interval 2 (obs 4-6)
+  d_l_mat = matrix(c(1.0, 1.0, 1.0, -1.0, -1.0, -1.0), nrow = 1L)
+  interval_idx_mat = matrix(c(1L, 1L, 1L, 2L, 2L, 2L), nrow = 1L)
+  result = xplaineff:::ale_sweep_cpp(
+    ord_idx = 1:6,
+    d_l_mat = d_l_mat, interval_idx_mat = interval_idx_mat,
+    offsets = 0L,
+    tot_n = c(3.0, 3.0), tot_s1 = c(3.0, -3.0), tot_s2 = c(3.0, 3.0),
+    r_risks = c(0.0, 0.0),
+    is_cand = rep(TRUE, 6), min_node_size = 2L,
+    split_feat_j = 0L,
+    z_sorted = as.numeric(1:6), n_obs = n
+  )
+  expect_true(is.list(result))
+  expect_true(all(c("best_t", "best_risks_sum") %in% names(result)))
+  expect_true(result$best_t >= 2L && result$best_t <= 4L)
+  expect_true(is.finite(result$best_risks_sum))
+})
+
+test_that("search_best_split_point_ale keeps corrected self feature signal", {
+  skip_ale_cpp_if_unavailable()
+  dt = data.table::data.table(
+    row_id = 1:8,
+    feat_val = 1:8,
+    x_left = 1:8,
+    x_right = 1:8,
+    d_l = c(0, 0, 0, 0, 10, 10, 10, 10),
+    interval_index = rep(1L, 8)
+  )
+  dt[, int_n := .N, by = interval_index]
+  dt[, int_s1 := sum(d_l), by = interval_index]
+  dt[, int_s2 := sum(d_l^2), by = interval_index]
+  effect = list(x = dt)
+  st = xplaineff:::build_ale_interval_stats(effect, "x")
+
+  result = xplaineff:::search_best_split_point_ale(
+    z = 1:8,
+    effect = effect,
+    st_table = st,
+    split_feat = "x",
+    is_categorical = FALSE,
+    min_node_size = 2L
+  )
+
+  expect_equal(result$split_point, 4.5)
+  expect_equal(result$split_objective, -1200 / 7)
+  expect_equal(result$objective_value_j, 0)
+})
+
+test_that("search_best_split_point_ale zeroes self risk only on constant categorical children", {
+  skip_ale_cpp_if_unavailable()
+  z = factor(c("A", "A", "B", "B", "C", "C"), levels = c("A", "B", "C"))
+  dt = data.table::data.table(
+    row_id = 1:6,
+    feat_val = z,
+    x_left = z,
+    x_right = z,
+    d_l = c(0, 2, 0, 2, 8, 10),
+    interval_index = c(1L, 1L, 2L, 2L, 3L, 3L)
+  )
+  dt[, int_n := .N, by = interval_index]
+  dt[, int_s1 := sum(d_l), by = interval_index]
+  dt[, int_s2 := sum(d_l^2), by = interval_index]
+  effect = list(x = dt)
+  st = xplaineff:::build_ale_interval_stats(effect, "x")
+
+  result = xplaineff:::search_best_split_point_ale(
+    z = z,
+    effect = effect,
+    st_table = st,
+    split_feat = "x",
+    is_categorical = TRUE,
+    min_node_size = 2L
+  )
+
+  expect_equal(as.character(result$split_point), "A")
+  expect_equal(result$split_objective, -2)
+  expect_equal(result$left_objective_value_j, 0)
+  expect_equal(result$right_objective_value_j, 4)
+})
+
+test_that("ALE exhaustive categorical split search finds non-prefix level sets", {
+  skip_ale_cpp_if_unavailable()
+  group = factor(rep(c("a", "b", "c", "d"), each = 2L), levels = c("a", "b", "c", "d"), ordered = TRUE)
+  d_l = c(5, 5, -5, -5, 5, 5, -5, -5)
+  dt = data.table::data.table(
+    row_id = seq_along(group),
+    feat_val = seq_along(group),
+    x_left = seq_along(group),
+    x_right = seq_along(group),
+    d_l = d_l,
+    interval_index = rep(1L, length(group))
+  )
+  dt[, `:=`(
+    int_n = .N,
+    int_s1 = sum(d_l),
+    int_s2 = sum(d_l^2)
+  ), by = interval_index]
+  effect = list(signal = dt)
+  Z = data.frame(group = group)
+
+  ordered = xplaineff:::search_best_split_ale(
+    Z = Z,
+    effect = effect,
+    min_node_size = 2L,
+    categorical_split = "ordered_prefix"
+  )
+  exhaustive = xplaineff:::search_best_split_ale(
+    Z = Z,
+    effect = effect,
+    min_node_size = 2L,
+    categorical_split = "exhaustive"
+  )
+
+  expect_equal(exhaustive$split_levels[[1L]], c("a", "c"))
+  expect_equal(exhaustive$split_point[1L], "{a, c}")
+  expect_lt(exhaustive$split_objective[1L], ordered$split_objective[1L])
+})
+
+test_that("ALE exhaustive categorical split search errors above the level guard", {
+  skip_ale_cpp_if_unavailable()
+  n_levels = 13L
+  group = factor(letters[seq_len(n_levels)], levels = letters[seq_len(n_levels)], ordered = TRUE)
+  dt = data.table::data.table(
+    row_id = seq_along(group),
+    feat_val = seq_along(group),
+    x_left = seq_along(group),
+    x_right = seq_along(group),
+    d_l = seq_along(group),
+    interval_index = rep(1L, length(group))
+  )
+  dt[, `:=`(
+    int_n = .N,
+    int_s1 = sum(d_l),
+    int_s2 = sum(d_l^2)
+  ), by = interval_index]
+
+  expect_error(
+    xplaineff:::search_best_split_ale(
+      Z = data.frame(group = group),
+      effect = list(signal = dt),
+      min_node_size = 1L,
+      categorical_split = "exhaustive",
+      max_exhaustive_levels = 12L
+    ),
+    "too many level-set candidates"
+  )
+})
+
+test_that("ALE split prefers x3 on the interaction synthetic DGP", {
+  skip_ale_cpp_if_unavailable()
+  set.seed(1234)
+  n = 500L
+  x1 = runif(n, -1, 1)
+  x2 = runif(n, -1, 1)
+  x3 = runif(n, -1, 1)
+  data = data.frame(x1, x2, x3)
+  predict_fun = function(model, newdata) {
+    ifelse(newdata$x3 > 0, 3 * newdata$x1, -3 * newdata$x1) + newdata$x3
+  }
+  data$y = predict_fun(NULL, data)
+
+  prepared = xplaineff:::prepare_split_data_ale(
+    model = list(),
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 10L,
+    predict_fun = predict_fun,
+    ale_engine = "cpp"
+  )
+  result = xplaineff:::search_best_split_ale(
+    Z = prepared$Z,
+    effect = prepared$Y,
+    min_node_size = 10L
+  )
+
+  expect_true(any(result$best_split))
+  expect_equal(result$split_feature[result$best_split][1], "x3")
+})
+
+test_that("compact ALE split search matches data.table ALE on numeric data", {
+  skip_ale_cpp_if_unavailable()
+  set.seed(20260713)
+  n = 120L
+  data = data.frame(
+    x1 = runif(n, -1, 1),
+    x2 = runif(n, -1, 1),
+    x3 = runif(n, -1, 1)
+  )
+  predict_fun = function(model, newdata) {
+    4 * newdata$x1 + ifelse(newdata$x3 > 0, 3 * newdata$x2, -3 * newdata$x2)
+  }
+  data$y = predict_fun(NULL, data)
+
+  regular = withr::with_options(
+    list(xplaineff.ale.compact = FALSE),
+    xplaineff:::prepare_split_data_ale(
+      model = list(),
+      data = data,
+      target_feature_name = "y",
+      n_intervals = 10L,
+      predict_fun = predict_fun,
+      ale_engine = "cpp"
+    )
+  )
+  compact = withr::with_options(
+    list(xplaineff.ale.compact = TRUE),
+    xplaineff:::prepare_split_data_ale(
+      model = list(),
+      data = data,
+      target_feature_name = "y",
+      n_intervals = 10L,
+      predict_fun = predict_fun,
+      ale_engine = "cpp"
+    )
+  )
+
+  regular_split = xplaineff:::search_best_split_ale(
+    Z = regular$Z,
+    effect = regular$Y,
+    min_node_size = 10L
+  )
+  compact_split = xplaineff:::search_best_split_ale(
+    Z = compact$Z,
+    effect = compact$Y,
+    min_node_size = 10L
+  )
+
+  expect_s3_class(compact$Y, "xplaineff_ale_compact")
+  expect_equal(compact_split$split_feature, regular_split$split_feature)
+  expect_equal(compact_split$split_point, regular_split$split_point)
+  expect_equal(compact_split$split_objective, regular_split$split_objective, tolerance = 1e-10)
+  expect_equal(compact_split$left_objective_value_j, regular_split$left_objective_value_j, tolerance = 1e-10)
+  expect_equal(compact_split$right_objective_value_j, regular_split$right_objective_value_j, tolerance = 1e-10)
+})
+
+test_that("ALE matrix split search matches data.table ALE on mixed data", {
+  skip_ale_cpp_if_unavailable()
+  set.seed(20260716)
+  n = 150L
+  data = data.frame(
+    x1 = runif(n, -1, 1),
+    x2 = factor(sample(c("a", "b", "c"), n, replace = TRUE)),
+    x3 = runif(n, -1, 1)
+  )
+  predict_fun = function(model, newdata) {
+    2 * newdata$x1 + ifelse(newdata$x2 == "b", 3, ifelse(newdata$x2 == "c", -2, 0)) +
+      ifelse(newdata$x3 > 0, newdata$x1, -newdata$x1)
+  }
+  data$y = predict_fun(NULL, data)
+
+  regular = withr::with_options(
+    list(xplaineff.ale.compact = FALSE),
+    xplaineff:::prepare_split_data_ale(
+      model = list(),
+      data = data,
+      target_feature_name = "y",
+      n_intervals = 8L,
+      predict_fun = predict_fun,
+      ale_engine = "cpp"
+    )
+  )
+  compact = withr::with_options(
+    list(xplaineff.ale.compact = TRUE),
+    xplaineff:::prepare_split_data_ale(
+      model = list(),
+      data = data,
+      target_feature_name = "y",
+      n_intervals = 8L,
+      predict_fun = predict_fun,
+      ale_engine = "cpp"
+    )
+  )
+
+  regular_split = xplaineff:::search_best_split_ale(
+    Z = regular$Z,
+    effect = regular$Y,
+    min_node_size = 10L
+  )
+  compact_split = xplaineff:::search_best_split_ale(
+    Z = compact$Z,
+    effect = compact$Y,
+    min_node_size = 10L
+  )
+
+  expect_s3_class(compact$Y, "xplaineff_ale_compact")
+  expect_equal(compact$Y$feature_types, c("numeric", "factor", "numeric"))
+  expect_equal(compact_split$split_feature, regular_split$split_feature)
+  expect_equal(compact_split$split_point, regular_split$split_point)
+  expect_equal(compact_split$split_objective, regular_split$split_objective, tolerance = 1e-10)
+  expect_equal(compact_split$left_objective_value_j, regular_split$left_objective_value_j, tolerance = 1e-10)
+  expect_equal(compact_split$right_objective_value_j, regular_split$right_objective_value_j, tolerance = 1e-10)
+})
+
+test_that("ALE split keeps x3 as the first split on the example-style synthetic DGP", {
+  skip_ale_cpp_if_unavailable()
+  set.seed(1)
+  n = 1000L
+  x1 = round(runif(n, -1, 1), 1)
+  x2 = round(runif(n, -1, 1), 3)
+  x3 = factor(sample(c(0, 1), size = n, replace = TRUE, prob = c(0.5, 0.5)))
+  x4 = sample(c(0, 1), size = n, replace = TRUE, prob = c(0.7, 0.3))
+  x5 = sample(c(0, 1), size = n, replace = TRUE, prob = c(0.5, 0.5))
+  data = data.frame(x1, x2, x3, x4, x5)
+  predict_fun = function(model, newdata) {
+    0.2 * newdata$x1 - 8 * newdata$x2 +
+      ifelse(newdata$x3 == 0, 16 * newdata$x2, 0) +
+      ifelse(newdata$x1 > 0, 8 * newdata$x2, 0)
+  }
+  data$y = predict_fun(NULL, data)
+
+  prepared = xplaineff:::prepare_split_data_ale(
+    model = list(),
+    data = data,
+    target_feature_name = "y",
+    n_intervals = 10L,
+    predict_fun = predict_fun,
+    ale_engine = "cpp"
+  )
+  result = xplaineff:::search_best_split_ale(
+    Z = prepared$Z,
+    effect = prepared$Y,
+    min_node_size = 10L
+  )
+
+  expect_true(any(result$best_split))
+  expect_equal(result$split_feature[result$best_split][1], "x3")
+})
+
+test_that("ale_sweep_cpp returns Inf when no candidate splits", {
+  skip_ale_cpp_if_unavailable()
+  n = 6L
+  d_l_mat = matrix(c(1.0, 1.0, 1.0, -1.0, -1.0, -1.0), nrow = 1L)
+  interval_idx_mat = matrix(c(1L, 1L, 1L, 2L, 2L, 2L), nrow = 1L)
+  result = xplaineff:::ale_sweep_cpp(
+    ord_idx = 1:6,
+    d_l_mat = d_l_mat, interval_idx_mat = interval_idx_mat,
+    offsets = 0L,
+    tot_n = c(3.0, 3.0), tot_s1 = c(3.0, -3.0), tot_s2 = c(3.0, 3.0),
+    r_risks = c(0.0, 0.0),
+    is_cand = rep(FALSE, 6), min_node_size = 2L,
+    split_feat_j = 0L,
+    z_sorted = as.numeric(1:6), n_obs = n
+  )
+  expect_true(is.na(result$best_t))
+  expect_true(is.infinite(result$best_risks_sum) && result$best_risks_sum > 0)
+})

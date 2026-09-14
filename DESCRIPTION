@@ -1,0 +1,56 @@
+Package: xplaineff
+Type: Package
+Title: Decomposing Global Feature Effects Based on Feature Interactions
+Version: 0.1.0
+Authors@R: c(
+    person(
+      "Zizheng", "Zhang",
+      email = "Zizheng.Zhang@stat.uni-muenchen.de",
+      role = c("aut", "cre")
+    )
+  )
+Description: Implements the GADGET (Generalized Additive Decomposition of Global
+    EffecTs) algorithm for interpretable machine learning. The package
+    recursively partitions the feature space to minimize heterogeneity of
+    feature effects (e.g., Accumulated Local Effects or Partial Dependence),
+    producing a tree of regions where effects are more stable. It supports
+    both ALE and PD strategies, works with 'mlr3' learners and provides visualization of the interaction
+    tree and regional effect plots. The method is described in Herbinger, J.,
+    Wright, M. N., Nagler, T., Bischl, B., and Casalicchio, G. (2024),
+    "Decomposing Global Feature Effects Based on Feature Interactions"
+    <https://jmlr.org/papers/volume25/23-0699/23-0699.pdf>.
+License: MIT + file LICENSE
+Depends: R (>= 4.3.0)
+URL: https://github.com/mlr-org/xplaineff
+BugReports: https://github.com/mlr-org/xplaineff/issues
+Encoding: UTF-8
+Imports: checkmate (>= 2.3.2), cli (>= 3.0.0), data.table (>= 1.14.0),
+        ggplot2 (>= 3.5.2), ggraph (>= 2.2.1), igraph (>= 2.1.4),
+        mlr3misc (>= 0.14.0), patchwork (>= 1.3.0), R6 (>= 2.6.1), Rcpp
+        (>= 1.0.0)
+LinkingTo: Rcpp, RcppArmadillo
+RoxygenNote: 7.3.2
+Suggests: testthat (>= 3.0.0), iml (>= 0.11.4), mlr3, mlr3learners,
+        ranger, ISLR2, rpart, withr, xgboost
+Config/testthat/edition: 3
+Collate: 'EffectStrategy.R' 'AleStrategy.R' 'GadgetTree.R' 'Node.R'
+        'PdStrategy.R' 'RcppExports.R' 'calculate_ale.R'
+        'calculate_ale_fast.R' 'calculate_ale_heterogeneity.R'
+        'calculate_pd.R' 'categorical_split_utils.R'
+        'choose_operator.R' 'convert_tree_to_list.R'
+        'extract_split_info.R' 'factor_to_numeric.R'
+        'find_node_by_id.R' 'mean_center_ice.R' 'node_heterogeneity.R'
+        'node_transform_ale.R' 'order_categorical_levels.R'
+        'plot_regional_ale.R' 'plot_regional_pd.R' 'plot_tree_ale.R'
+        'plot_tree_pd.R' 'plot_tree_structure.R' 'plot_utils.R'
+        'prepare_layout_data.R' 'prepare_plot_data_ale.R'
+        'prepare_split_data_ale.R' 'prepare_split_data_pd.R'
+        'prepare_split_data_utils.R' 'search_best_split_ale.R'
+        'search_best_split_point_ale.R' 'track_split_condition.R'
+        'xplaineff_internal.R' 'xplaineff_package.R'
+NeedsCompilation: yes
+Packaged: 2026-09-04 08:21:15 UTC; zzz
+Author: Zizheng Zhang [aut, cre]
+Maintainer: Zizheng Zhang <Zizheng.Zhang@stat.uni-muenchen.de>
+Repository: CRAN
+Date/Publication: 2026-09-14 15:00:02 UTC

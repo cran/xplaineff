@@ -1,0 +1,24 @@
+# xplaineff 0.1.0
+
+- Package renamed to xplaineff for CRAN submission (no issue).
+- AleStrategy categorical splits now apply ordered-prefix partitions consistently in fitted trees and display category sets for those splits (no issue).
+- AleStrategy now accepts a bare prediction function as `model` in the default ALE prediction path (no issue).
+- AleStrategy split search now skips ALE effect components with numerically zero heterogeneity while keeping all split candidate features available (no issue).
+- AleStrategy and PdStrategy now prune negligible effect components during split search while preserving all split candidate features and full effect grids (no issue).
+- AleStrategy and PdStrategy now default to `auto` precompute engine selection while keeping explicit `cpp` and `r` engines as compatibility options (no issue).
+- AleStrategy now supports `categorical_split = "exhaustive"` for level-set searches over categorical ALE split candidates while retaining ordered-prefix splits as the default (no issue).
+- AleStrategy split search now uses the bias-corrected self-gain ranking objective for ALE self-feature splits (no issue).
+- AleStrategy now uses only the selected split's objective rows when multiple ALE split candidates tie (no issue).
+- calculate_ale() and calculate_ale_fast() now preserve fractional interval bounds for integer features and restore shared prediction scratch data between features (no issue).
+- calculate_ale_fast() now normalizes custom predict_fun outputs like the R ALE path and errors on prediction length mismatches (no issue).
+- calculate_pd() now routes custom `predict_fun` calls through the cached R-side PD stack to avoid slow data-frame reconstruction in the C++ stacker (no issue).
+- calculate_pd() now uses a row-major full-ICE prediction layout for native ranger regression models under `pd_engine = "auto"` (no issue).
+- compute_ice_r() now preserves fractional grid values for cached integer features in the PD R backend (no issue).
+- default_predict_fun() now uses direct regression prediction paths for native `ranger`, native and mlr3 `rpart`, and native and mlr3 `xgboost` models when no custom `predict_fun` is supplied. It also skips redundant feature subsetting for already aligned prediction data (no issue).
+- extract_split_info() keeps categorical split level sets out of the default summary table (no issue).
+- extract_split_info() now omits internal split timings by default and can include them with `include_timing = TRUE` (no issue).
+- PdStrategy now avoids redundant re-centering for already centered full-grid PD matrices and uses a cache-friendly exact split-search layout (no issue).
+- PdStrategy now supports `categorical_split = "exhaustive"` for level-set searches over categorical PD split candidates while retaining one-vs-rest as the default and guarding large level counts with `max_exhaustive_levels` (no issue).
+- plot_tree_pd() now displays categorical split conditions as category sets instead of equality labels (no issue).
+- plot_tree_pd() now names returned node plots with actual tree node ids instead of depth-local positions (no issue).
+- prepare_split_data_pd() now infers effect features from precomputed PD/ICE results when feature_set is omitted and still uses all non-target columns as split candidates (no issue).
