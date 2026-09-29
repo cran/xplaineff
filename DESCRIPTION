@@ -1,12 +1,29 @@
 Package: xplaineff
 Type: Package
 Title: Decomposing Global Feature Effects Based on Feature Interactions
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: c(
     person(
       "Zizheng", "Zhang",
       email = "Zizheng.Zhang@stat.uni-muenchen.de",
-      role = c("aut", "cre")
+      role = c("aut", "cre"),
+      comment = c(ORCID = "0009-0009-4252-8018")
+    ),
+    person(
+      "Coco", "Bögel",
+      role = "aut",
+      comment = c(ORCID = "0009-0002-0683-4957")
+    ),
+    person(
+      "Giuseppe", "Casalicchio",
+      email = "giuseppe.casalicchio@stat.uni-muenchen.de",
+      role = "aut",
+      comment = c(ORCID = "0000-0001-5324-5966")
+    ),
+    person(
+      "Bernd", "Bischl",
+      role = "aut",
+      comment = c(ORCID = "0000-0001-6002-6980")
     )
   )
 Description: Implements the GADGET (Generalized Additive Decomposition of Global
@@ -30,9 +47,10 @@ Imports: checkmate (>= 2.3.2), cli (>= 3.0.0), data.table (>= 1.14.0),
         (>= 1.0.0)
 LinkingTo: Rcpp, RcppArmadillo
 RoxygenNote: 7.3.2
-Suggests: testthat (>= 3.0.0), iml (>= 0.11.4), mlr3, mlr3learners,
-        ranger, ISLR2, rpart, withr, xgboost
+Suggests: testthat (>= 3.0.0), knitr, rmarkdown, iml (>= 0.11.4), mlr3,
+        mlr3learners, ranger, ISLR2, rpart, withr, xgboost
 Config/testthat/edition: 3
+VignetteBuilder: knitr
 Collate: 'EffectStrategy.R' 'AleStrategy.R' 'GadgetTree.R' 'Node.R'
         'PdStrategy.R' 'RcppExports.R' 'calculate_ale.R'
         'calculate_ale_fast.R' 'calculate_ale_heterogeneity.R'
@@ -49,8 +67,13 @@ Collate: 'EffectStrategy.R' 'AleStrategy.R' 'GadgetTree.R' 'Node.R'
         'search_best_split_point_ale.R' 'track_split_condition.R'
         'xplaineff_internal.R' 'xplaineff_package.R'
 NeedsCompilation: yes
-Packaged: 2026-09-04 08:21:15 UTC; zzz
-Author: Zizheng Zhang [aut, cre]
+Packaged: 2026-09-28 15:04:45 UTC; zzz
+Author: Zizheng Zhang [aut, cre] (ORCID:
+    <https://orcid.org/0009-0009-4252-8018>),
+  Coco Bögel [aut] (ORCID: <https://orcid.org/0009-0002-0683-4957>),
+  Giuseppe Casalicchio [aut] (ORCID:
+    <https://orcid.org/0000-0001-5324-5966>),
+  Bernd Bischl [aut] (ORCID: <https://orcid.org/0000-0001-6002-6980>)
 Maintainer: Zizheng Zhang <Zizheng.Zhang@stat.uni-muenchen.de>
 Repository: CRAN
-Date/Publication: 2026-09-14 15:00:02 UTC
+Date/Publication: 2026-09-29 11:30:02 UTC
